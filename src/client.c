@@ -555,8 +555,20 @@ static bool try_execute_tick_cmd(uint32_t ticks, strct_user_input user_input, ch
 }
 
 static void send_connect_cmd(const char* host, int port) {
+
+    if(host == NULL) {
+        printf("ERR -> send_connect_cmd() host is NULL !\n");
+        return;
+    }
+
     size_t host_buf_size = ERR_BUFF_SIZE;
     char* host_buf = malloc(host_buf_size);
+
+    if(host_buf == NULL) {
+        printf("ERR -> send_connect_cmd() malloc() for host_buf returns NULL !\n");
+        return;
+    }
+
     strncpy(host_buf, host, host_buf_size);
     host_buf[host_buf_size - 1] = '\0';
 
