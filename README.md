@@ -63,8 +63,8 @@
 ## 🔌 Используемые технологии
 
 - **C (C17)**
-- **ENet** — UDP-библиотека с надежной доставкой
-- **MsgPack-C** — бинарная сериализация сообщений
+- **[ENet](https://github.com/lsalzman/enet)** — UDP-библиотека с надежной доставкой
+- **[MsgPack-C](https://github.com/msgpack/msgpack-c)** — бинарная сериализация сообщений
 - **POSIX Threads (pthreads)** — многопоточность
 - **Linux / WSL2**
 
