@@ -103,7 +103,7 @@ Serialization is performed using **MsgPack**, which:
 
 Install required libraries:
 ```bash
-sudo apt install libenet-dev libmsgpack-dev
+sudo apt install libenet-dev libmsgpack-dev libevent-dev -y
 ````
 
 ### Build
