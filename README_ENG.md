@@ -62,8 +62,8 @@ The model is **not real-time**, but **event-driven**:
 ## 🔌 Technologies Used
 
 - **C (C17)**
-- **ENet** — UDP networking library with reliable delivery
-- **MsgPack-C** — binary message serialization
+- **[ENet](https://github.com/lsalzman/enet)** — UDP networking library with reliable delivery
+- **[MsgPack-C](https://github.com/msgpack/msgpack-c)** — binary message serialization
 - **POSIX Threads (pthreads)** — multithreading
 - **Linux / WSL2**
 
