@@ -104,7 +104,7 @@
 
 Установить:
 ```bash
-sudo apt install libenet-dev libmsgpack-dev
+sudo apt install libenet-dev libmsgpack-dev libevent-dev -y
 ````
 
 ### Сборка
