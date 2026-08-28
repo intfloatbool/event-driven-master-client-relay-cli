@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -std=c17 -Wall -Wextra
-LDFLAGS = -Wl,-Bstatic -lenet -lmsgpack-c -Wl,-Bdynamic
+LDFLAGS = -lenet -lmsgpackc
 
 SRC_DIR = src
 
