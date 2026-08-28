@@ -130,7 +130,11 @@ This will produce:
 ### Clients
 
 ```bash
-./client <server_ip>
+# run on the default host (if the server is on the same machine)
+./client
+
+# or with the IP argument of the host where the server is running
+./client 2599.1111.2599.1111
 ```
 
 You can run:
