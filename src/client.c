@@ -603,9 +603,6 @@ static void send_connect_cmd(const char *host, int port) {
 
   host_buf[host_buf_size - 1] = '\0';
 
-  // strncpy(host_buf, host, host_buf_size);
-  // host_buf[host_buf_size - 1] = '\0';
-
   strct_msg_connect *msg_connect = malloc(sizeof(strct_msg_connect));
   msg_connect->port = port;
   msg_connect->host = host_buf;
