@@ -14,6 +14,7 @@
 #include "protocol_msg.h"
 #include "help_func/math_and_time.h"
 #include "thread_safe/safe_queue.h"
+#include "ifb_syscall_safe.h"
 
 typedef enum {
     CONNECT = 0,
@@ -565,12 +566,19 @@ static void send_connect_cmd(const char* host, int port) {
     char* host_buf = malloc(host_buf_size);
 
     if(host_buf == NULL) {
-        printf("ERR -> send_connect_cmd() malloc() for host_buf returns NULL !\n");
+        fprintf(stderr, "ERR -> send_connect_cmd() malloc() for host_buf returns NULL !\n");
         return;
     }
 
-    strncpy(host_buf, host, host_buf_size);
+    if( ! safe_strncpy(host_buf, host, host_buf_size) ) {
+        fprintf(stderr, "ERR -> send_connect_cmd() safe_strncpy() failed!\n");
+        return;
+    }
+
     host_buf[host_buf_size - 1] = '\0';
+
+    // strncpy(host_buf, host, host_buf_size);
+    // host_buf[host_buf_size - 1] = '\0';
 
     strct_msg_connect* msg_connect = malloc(sizeof(strct_msg_connect));
     msg_connect->port = port;
