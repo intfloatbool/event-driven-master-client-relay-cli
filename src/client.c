@@ -1,12 +1,14 @@
 #include <enet/enet.h>
 #include <msgpack.h>
 
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 #include <threads.h>
 #include <time.h>
 #include <unistd.h>
@@ -40,6 +42,8 @@ typedef struct strct_user_input {
 } strct_user_input;
 
 // shared
+static const size_t FRAME_RATE = 30;
+
 static const char *NET_SUFFIX = "\t<<<NET_THREAD>>> ";
 
 static const size_t OTHERS_COUNT = 3;
@@ -527,8 +531,8 @@ static bool try_execute_tick_cmd(uint32_t ticks, strct_user_input user_input,
   ifb_strct_user_info my_ui = *MY_USER_INFO;
   pthread_mutex_unlock(&MTX_MY_USER_INFO);
 
-  printf("process input command (ticks: %u, x: %d, y: %d)...\n", ticks,
-         user_input.x, user_input.y);
+  //   printf("process input command (ticks: %u, x: %d, y: %d)...\n", ticks,
+  //          user_input.x, user_input.y);
 
   if (my_ui.is_master) {
     // мастер обрабатывает свой инпут и чужой (приходящий из сервера)
@@ -610,6 +614,52 @@ static void send_connect_cmd(const char *host, int port) {
   enqueue_cmd(CONNECT, (void *)msg_connect);
 }
 
+static bool is_user_info_ready() {
+  pthread_mutex_lock(&MTX_MY_USER_INFO);
+  bool result = false;
+  if (MY_USER_INFO != NULL) {
+    result = true;
+  }
+  pthread_mutex_unlock(&MTX_MY_USER_INFO);
+
+  return result;
+}
+
+static void *tick_loop_thread(void *arg) {
+  (void)arg;
+
+  time_t ms = 1000 / FRAME_RATE;
+  printf("MS: %ld\n", ms);
+  struct timespec ts = ifb_mat_timespec_ms(ms);
+
+  uint64_t total_frames = 0;
+  while (atomic_load(&IS_APP_RUNNING)) {
+
+    if (total_frames % FRAME_RATE == 0) {
+      // printf("frame ticks: %ld\n", total_frames);
+    }
+
+    // TODO: AUTOTICK
+
+    if (is_user_info_ready()) {
+      char err_buf[ERR_BUFF_SIZE];
+      strct_user_input input = {0};
+      uint32_t ticks = (uint32_t)total_frames;
+      if (try_execute_tick_cmd(ticks, input, err_buf, ERR_BUFF_SIZE)) {
+
+      } else {
+        fprintf(stderr, "ERR -> tick_loop_thread() try_execute_tick_cmd()%s\n",
+                err_buf);
+      }
+    }
+
+    thrd_sleep(&ts, NULL);
+    total_frames++;
+  }
+
+  return NULL;
+}
+
 int main(int argc, char **argv) {
 
   char *host = NULL;
@@ -650,6 +700,9 @@ int main(int argc, char **argv) {
 
   pthread_t net_thread;
   pthread_create(&net_thread, NULL, net_bg_thread, NULL);
+
+  pthread_t tick_thread;
+  pthread_create(&tick_thread, NULL, tick_loop_thread, NULL);
 
   // input loop
 
@@ -757,6 +810,7 @@ int main(int argc, char **argv) {
   thrd_sleep(&ts, NULL);
 
   atomic_store(&IS_APP_RUNNING, false);
+  pthread_join(tick_thread, NULL);
   pthread_join(net_thread, NULL);
   pthread_mutex_destroy(&local_cmds_mutex);
   pthread_mutex_destroy(&MTX_CURRENT_GAME_STATE);
