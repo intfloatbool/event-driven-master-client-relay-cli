@@ -607,7 +607,7 @@ static void send_connect_cmd(const char *host, int port) {
     return;
   }
 
-  size_t host_buf_size = ERR_BUFF_SIZE;
+  size_t host_buf_size = 512;
   char *host_buf = malloc(host_buf_size);
 
   if (host_buf == NULL) {
