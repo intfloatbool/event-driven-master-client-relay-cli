@@ -245,6 +245,18 @@ static void handle_cmd_connect_to_host(strct_msg_connect *msg) {
 
   printf("trying to connect host: %s:%d\n ...", msg->host, msg->port);
 
+  {
+    // test
+    //msg->host = strdup("http://goynet.xxx.ru");
+    char err_buf[ERR_BUFF_SIZE];
+    if (!check_host_error(msg->host, (uint8_t)AF_INET, err_buf,
+                          ERR_BUFF_SIZE)) {
+      fprintf(stderr, "check_host_error() for host '%s' failed! Err: %s\n",
+              msg->host, err_buf);
+      return;
+    }
+  }
+
   ENetAddress address;
   if (enet_address_set_host(&address, msg->host) != 0) {
     print_err("enet_address_set_host() failed.");
@@ -435,7 +447,6 @@ static void *net_bg_thread(void *arg) {
         printf("\tCMD CONNECT: argz ( %s, %d )\n", msg->host, msg->port);
 
         handle_cmd_connect_to_host(msg);
-
         free(msg->host);
         free(msg);
 
@@ -451,6 +462,11 @@ static void *net_bg_thread(void *arg) {
       case REQ_USER_INFO: {
         printf("\tCMD REQ_USER_INFO\n");
 
+        if (CLIENT_PEER == NULL) {
+          fprintf(stderr, "CLIENT_PEER is NULL.\n");
+          break;
+        }
+
         char err[ERR_BUFF_SIZE];
 
         if (!ifb_ptcl_try_send_msg_packet(
@@ -462,7 +478,7 @@ static void *net_bg_thread(void *arg) {
         break;
       }
       case TICK_MC: {
-        printf("\tCMD TICK_MC\n");
+        // printf("\tCMD TICK_MC\n");
 
         char err[ERR_BUFF_SIZE];
         msgpack_sbuffer sbuf = {0};
