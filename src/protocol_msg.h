@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "ifb_enet_safe.h"
+
 const uint16_t PTCL_PORT = 7777;
 const size_t ERR_BUFF_SIZE = 128;
 const uint8_t IFB_CNST_NET_CHANNELS_COUNT = 3;
@@ -107,11 +109,8 @@ bool ifb_ptcl_try_send_msg_packet(ifb_en_message_type msg_type,
       enet_packet_create(data, data_size,
                          is_reliable ? ENET_PACKET_FLAG_RELIABLE
                                      : ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
-
-  int send_res = enet_peer_send(peer, channel_id, pkt);
-
-  if (send_res != 0) {
-    snprintf(error_buffer, error_buf_size, "enet_peer_send failed.");
+  if (!try_enet_peer_send(peer, channel_id, pkt, error_buffer,
+                          error_buf_size)) {
     enet_packet_destroy(pkt);
     free(data);
     return false;
