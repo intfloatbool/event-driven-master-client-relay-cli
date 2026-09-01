@@ -4,6 +4,7 @@
 #include <inttypes.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,8 +23,6 @@ typedef enum {
   CONNECT = 0,
   DISCONNECT_N_FREE = 1,
   REQ_USER_INFO = 2,
-  TICK_SLAVE = 3,
-  TICK_MC = 4,
 } strct_client_command_type;
 
 typedef struct strct_client_command_msg {
@@ -247,7 +246,7 @@ static void handle_cmd_connect_to_host(strct_msg_connect *msg) {
 
   {
     // test
-    //msg->host = strdup("http://goynet.xxx.ru");
+    // msg->host = strdup("http://goynet.xxx.ru");
     char err_buf[ERR_BUFF_SIZE];
     if (!check_host_error(msg->host, (uint8_t)AF_INET, err_buf,
                           ERR_BUFF_SIZE)) {
@@ -306,14 +305,14 @@ static void handle_cmd_connect_to_host(strct_msg_connect *msg) {
 
 static void handle_net_events_loop() {
   ENetEvent event;
-  int r = enet_host_service(CLIENT_HOST, &event, 100);
+  int r = enet_host_service(CLIENT_HOST, &event, 1);
   if (r < 0) {
     print_err("socket error.");
     return;
   }
 
   if (r == 0) {
-    // timeout
+    // no events.
     return;
   }
   switch (event.type) {
@@ -413,7 +412,7 @@ static void handle_net_events_loop() {
 static void *net_bg_thread(void *arg) {
   (void)arg; // supress warning
 
-  struct timespec ts = ifb_mat_timespec_ms(500);
+  struct timespec ts = ifb_mat_timespec_ms(1000 / FRAME_RATE);
 
   while (atomic_load(&IS_APP_RUNNING)) {
 
@@ -477,47 +476,6 @@ static void *net_bg_thread(void *arg) {
 
         break;
       }
-      case TICK_MC: {
-        // printf("\tCMD TICK_MC\n");
-
-        char err[ERR_BUFF_SIZE];
-        msgpack_sbuffer sbuf = {0};
-        msgpack_sbuffer_init(&sbuf);
-
-        pthread_mutex_lock(&MTX_CURRENT_GAME_STATE);
-        if (!CURRENT_GAME_STATE) {
-          printf("CURRENT_GAME_STATE is NULL\n!");
-          pthread_mutex_unlock(&MTX_CURRENT_GAME_STATE);
-          break;
-        }
-        ifb_strct_game_state game_state = *CURRENT_GAME_STATE;
-        pthread_mutex_unlock(&MTX_CURRENT_GAME_STATE);
-
-        if (!ifb_try_pack_game_state(&sbuf, &game_state, err, ERR_BUFF_SIZE)) {
-          printf("%s ifb_try_pack_game_state error: %s\n", NET_SUFFIX, err);
-          msgpack_sbuffer_destroy(&sbuf);
-          break;
-        }
-
-        if (!ifb_ptcl_try_send_msg_packet(
-                IFB_MSG_TYPE_GAME_STATE_UPD, IFB_NET_CHANNEL_STREAM, &sbuf,
-                CLIENT_PEER, CLIENT_HOST, true, true, err, ERR_BUFF_SIZE)) {
-          printf("%s send_msg_packet_to_server error: %s\n", NET_SUFFIX, err);
-        }
-        msgpack_sbuffer_destroy(&sbuf);
-        break;
-      }
-      case (TICK_SLAVE): {
-        strct_user_input *data = cmd_msg->data;
-        if (data == NULL) {
-          fprintf(stderr, "cannot resolve strct_user_input* from message.\n");
-          continue;
-        }
-
-        handle_cmd_slave_tick(data);
-        free(data);
-        break;
-      }
       default: {
         break;
       }
@@ -534,8 +492,8 @@ static void *net_bg_thread(void *arg) {
   return NULL;
 }
 
-static bool try_execute_tick_cmd(uint32_t ticks, strct_user_input user_input,
-                                 char *err_buf, size_t err_buf_size) {
+static bool try_execute_tick(uint32_t ticks, strct_user_input user_input,
+                             char *err_buf, size_t err_buf_size) {
 
   pthread_mutex_lock(&MTX_MY_USER_INFO);
   if (MY_USER_INFO == NULL) {
@@ -549,7 +507,7 @@ static bool try_execute_tick_cmd(uint32_t ticks, strct_user_input user_input,
 
   //   printf("process input command (ticks: %u, x: %d, y: %d)...\n", ticks,
   //          user_input.x, user_input.y);
-
+  bool isMC = my_ui.is_master;
   if (my_ui.is_master) {
     // мастер обрабатывает свой инпут и чужой (приходящий из сервера)
     pthread_mutex_lock(&MTX_CURRENT_GAME_STATE);
@@ -588,13 +546,43 @@ static bool try_execute_tick_cmd(uint32_t ticks, strct_user_input user_input,
     pthread_mutex_lock(&MTX_CURRENT_GAME_STATE);
     *CURRENT_GAME_STATE = game_state;
     pthread_mutex_unlock(&MTX_CURRENT_GAME_STATE);
+  }
 
-    enqueue_cmd(TICK_MC, NULL);
+  if (isMC) {
+    char err[ERR_BUFF_SIZE];
+    msgpack_sbuffer sbuf = {0};
+    msgpack_sbuffer_init(&sbuf);
+
+    pthread_mutex_lock(&MTX_CURRENT_GAME_STATE);
+    if (!CURRENT_GAME_STATE) {
+      snprintf(err_buf, err_buf_size, "CURRENT_GAME_STATE is NULL!");
+      pthread_mutex_unlock(&MTX_CURRENT_GAME_STATE);
+      return false;
+    }
+    ifb_strct_game_state game_state = *CURRENT_GAME_STATE;
+    pthread_mutex_unlock(&MTX_CURRENT_GAME_STATE);
+
+    if (!ifb_try_pack_game_state(&sbuf, &game_state, err, ERR_BUFF_SIZE)) {
+      snprintf(err_buf, err_buf_size, "ifb_try_pack_game_state error: %s\n",
+               err);
+      msgpack_sbuffer_destroy(&sbuf);
+      return false;
+    }
+    // XXX
+    bool is_reliable = false;
+    bool is_forced = false;
+    if (!ifb_ptcl_try_send_msg_packet(IFB_MSG_TYPE_GAME_STATE_UPD,
+                                      IFB_NET_CHANNEL_STREAM, &sbuf,
+                                      CLIENT_PEER, CLIENT_HOST, is_reliable,
+                                      is_forced, err, ERR_BUFF_SIZE)) {
+      snprintf(err_buf, err_buf_size, "send_msg_packet_to_server error: %s\n",
+               err);
+      msgpack_sbuffer_destroy(&sbuf);
+      return false;
+    }
+
   } else {
-    // отправляем свой инпут
-    strct_user_input *out_input = malloc(sizeof(strct_user_input));
-    *out_input = user_input;
-    enqueue_cmd(TICK_SLAVE, out_input);
+    handle_cmd_slave_tick(&user_input);
   }
 
   return true;
@@ -655,16 +643,12 @@ static void *tick_loop_thread(void *arg) {
       // printf("frame ticks: %ld\n", total_frames);
     }
 
-    // TODO: AUTOTICK
-
     if (is_user_info_ready()) {
       char err_buf[ERR_BUFF_SIZE];
       strct_user_input input = {0};
       uint32_t ticks = (uint32_t)total_frames;
-      if (try_execute_tick_cmd(ticks, input, err_buf, ERR_BUFF_SIZE)) {
-
-      } else {
-        fprintf(stderr, "ERR -> tick_loop_thread() try_execute_tick_cmd()%s\n",
+      if (!try_execute_tick(ticks, input, err_buf, ERR_BUFF_SIZE)) {
+        fprintf(stderr, "ERR -> tick_loop_thread() try_execute_tick %s\n",
                 err_buf);
       }
     }
@@ -803,7 +787,7 @@ int main(int argc, char **argv) {
 
       if (is_tick_input) {
         char err_buf[ERR_BUFF_SIZE];
-        if (try_execute_tick_cmd(local_ticks, input, err_buf, ERR_BUFF_SIZE)) {
+        if (try_execute_tick(local_ticks, input, err_buf, ERR_BUFF_SIZE)) {
 
           local_ticks++;
         } else {
