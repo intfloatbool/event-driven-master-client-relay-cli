@@ -28,7 +28,7 @@ The project was created as a practical exercise in:
   - apply the state received from the Master
 
 The model is **not real-time**, but **event-driven**:
-- the world is updated via the `tick` command
+- the world is updated in 30 FPS
 - ideal for learning, debugging, and understanding networking patterns
 
 ---
@@ -149,14 +149,12 @@ You can run:
 Example client commands:
 
 ```
-tick
 x+
 x-
 y+
 y-
 ```
 
-* `tick` — triggers a world update (Master only)
 * other commands send input to the Master client
 
 ---
