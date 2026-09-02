@@ -1,5 +1,5 @@
 #include "protocol_msg.h"
-#include "ifb_enet_safe.h"
+#include "safe_wrappers/ifb_enet_safe.h"
 
 bool ifb_ptcl_try_send_msg_packet(ifb_en_message_type msg_type,
                                   ifb_en_channel_id channel_id,

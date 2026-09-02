@@ -149,8 +149,14 @@ handle_game_state_updated_by_master(ifb_strct_game_state game_state) {
     fprintf(stderr, "ifb_try_pack_game_state() failed: %s\n", err_buf);
     return;
   }
+  // TODO: enet_host_broadcast
+  
+  // enet_host_broadcast(SERVER_HOST, IFB_NET_CHANNEL_STREAM,)
 
+  // return;
   // notify all slaves but  master
+
+  // BOTTLENECK HERE
   for (size_t i = 0; i < ACTIVE_PLAYERS_SIZE; i++) {
     strct_active_player *p = ACTIVE_PLAYERS[i];
     if (!is_player_exists_and_connected(p)) {

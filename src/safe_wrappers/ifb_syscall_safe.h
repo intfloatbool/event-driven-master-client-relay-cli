@@ -4,9 +4,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <netdb.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 
 #ifndef __clang__
 #else
@@ -19,8 +19,8 @@
 #pragma region SAFE_UTILS
 
 // protocol: 2 = AF_INET (IPv4) , 10 = AF_INET6 (IPv6)
-bool check_host_error(const char *hostname, uint8_t protocol, char *err_buf,
-                      size_t err_buf_size) {
+static inline bool check_host_error(const char *hostname, uint8_t protocol,
+                                    char *err_buf, size_t err_buf_size) {
 
   if (protocol != 2 && protocol != 10) {
     snprintf(err_buf, err_buf_size,
@@ -60,7 +60,8 @@ string.h -> strncpy()
 These functions copy non-null bytes from the string pointed to  by  src
        into  the  array pointed to by dst.
 */
-bool safe_strncpy(char *restrict dst, const char *restrict src, size_t count) {
+static inline bool safe_strncpy(char *restrict dst, const char *restrict src,
+                                size_t count) {
   if (dst == NULL || src == NULL) {
     return false;
   }
