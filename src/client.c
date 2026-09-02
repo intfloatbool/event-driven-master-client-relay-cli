@@ -15,8 +15,8 @@
 #include <unistd.h>
 
 #include "help_func/math_and_time.h"
-#include "safe_wrappers/ifb_syscall_safe.h"
 #include "protocol_msg.h"
+#include "safe_wrappers/ifb_syscall_safe.h"
 #include "thread_safe/safe_queue.h"
 
 typedef enum {
@@ -163,8 +163,12 @@ static void handle_on_slave_connected(ifb_strct_user_info user_info) {
 }
 
 static void
-handle_on_slave_game_state_updated(ifb_strct_game_state game_state) {
-  puts("\n*** *** game_state updated *** ***\n");
+handle_on_game_state_updated_from_server(ifb_strct_game_state game_state) {
+  int my_id = MY_USER_INFO != NULL ? MY_USER_INFO->id : -1;
+  bool is_master = MY_USER_INFO != NULL && MY_USER_INFO->is_master;
+
+  puts("\n*** *** game_state from server updated *** ***\n");
+  printf("\t my_id: %d, is_master: %s\n", my_id, is_master ? "TRUE" : "FALSE");
   printf("\t tick: %d\n", game_state.tick);
   printf("\t pos_1: ( exists: %d, x: %d, y: %d )\n", game_state.pos_1.is_exists,
          game_state.pos_1.x, game_state.pos_1.y);
@@ -199,9 +203,10 @@ static void handle_cmd_slave_tick(strct_user_input *user_input) {
     return;
   }
 
-  if (!ifb_ptcl_try_send_msg_packet(
-          IFB_MSG_TYPE_PLAYER_INPUT, IFB_NET_CHANNEL_STREAM, &sbuf, CLIENT_PEER,
-          CLIENT_HOST, true, true, err_buf, ERR_BUFF_SIZE)) {
+  if (!ifb_ptcl_try_send_msg_packet(IFB_MSG_TYPE_PLAYER_INPUT,
+                                    IFB_NET_CHANNEL_STREAM_PUPPET_INPUTS, &sbuf,
+                                    CLIENT_PEER, CLIENT_HOST, false, false,
+                                    err_buf, ERR_BUFF_SIZE)) {
     fprintf(stderr, "handle_cmd_slave_tick() err:\n\t%s\n", err_buf);
     msgpack_sbuffer_destroy(&sbuf);
     return;
@@ -279,8 +284,11 @@ static void handle_cmd_connect_to_host(strct_msg_connect *msg) {
   ENetEvent event;
   int wait_timeout_ms = 3000;
   bool is_connected = false;
-
   while (enet_host_service(client, &event, wait_timeout_ms) > 0) {
+
+    if (is_connected) {
+      break;
+    }
     switch (event.type) {
     case (ENET_EVENT_TYPE_CONNECT): {
       printf("connected to %s:%d\n", msg->host, msg->port);
@@ -313,6 +321,7 @@ static void handle_net_events_loop() {
 
   if (r == 0) {
     // no events.
+    // printf("\tno events\n");
     return;
   }
   switch (event.type) {
@@ -324,9 +333,10 @@ static void handle_net_events_loop() {
     if (ifb_ptcl_try_parse_message_by_type(&event, &msg_type, &payload,
                                            &payload_size, err_buf,
                                            ERR_BUFF_SIZE)) {
-      printf("received msg-> type:%s, data_null?:%s\n",
-             ifb_msg_type_to_str(msg_type), payload == NULL ? "true" : "false");
-      // unpack msgpack functions here
+      bool is_master = MY_USER_INFO != NULL && MY_USER_INFO->is_master;
+      // printf("received msg-> type:%s, data_null?:%s is_master:%s\n",
+      //        ifb_msg_type_to_str(msg_type), payload == NULL ? "true" :
+      //        "false", is_master ? "true" : "false");
       switch (msg_type) {
       case IFB_MSG_TYPE_RES_USER_INFO: {
 
@@ -359,10 +369,11 @@ static void handle_net_events_loop() {
         ifb_strct_game_state game_state = {0};
         if (ifb_try_unpack_game_state(payload, payload_size, &game_state,
                                       err_buf, ERR_BUFF_SIZE, false)) {
-          handle_on_slave_game_state_updated(game_state);
+          handle_on_game_state_updated_from_server(game_state);
         } else {
           fprintf(stderr, "ifb_try_unpack_game_state failed: %s\n", err_buf);
         }
+
         break;
       }
       case (IFB_MSG_TYPE_SLAVE_CONNECTED): {
@@ -379,17 +390,20 @@ static void handle_net_events_loop() {
         break;
       }
       case (IFB_MSG_TYPE_PLAYER_INPUT): {
-        // от слейвов мастеру приходят
-        ifb_strct_player_input player_input = {0};
-        if (ifb_try_unpack_player_input(payload, payload_size, &player_input,
-                                        err_buf, ERR_BUFF_SIZE)) {
-          printf("received player input: (id: %d, x: %d, y: %d)\n",
-                 player_input.id, player_input.x, player_input.y);
-          update_games_state_by_slave_input(player_input);
+        if (MY_USER_INFO != NULL && MY_USER_INFO->is_master) {
+          ifb_strct_player_input player_input = {0};
+          if (ifb_try_unpack_player_input(payload, payload_size, &player_input,
+                                          err_buf, ERR_BUFF_SIZE)) {
+            // printf("received player input: (id: %d, x: %d, y: %d)\n",
+            //        player_input.id, player_input.x, player_input.y);
+            update_games_state_by_slave_input(player_input);
 
-        } else {
-          fprintf(stderr, "ifb_try_unpack_player_input failed: %s\n", err_buf);
+          } else {
+            fprintf(stderr, "ifb_try_unpack_player_input failed: %s\n",
+                    err_buf);
+          }
         }
+
         break;
       }
       default: {
@@ -435,6 +449,8 @@ static void *net_bg_thread(void *arg) {
         print_err("cmd_msg is NULL");
         continue;
       }
+
+      printf("\tlocal cmd received: %u\n", cmd_msg->type);
 
       switch (cmd_msg->type) {
       case CONNECT: {

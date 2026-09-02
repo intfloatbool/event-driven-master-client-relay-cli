@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "protocol_msg.h"
 
@@ -58,6 +59,7 @@ static bool try_get_player_by_peer(ENetPeer *peer,
 
 static bool try_get_master_client(strct_active_player **out_player,
                                   char *err_buf, size_t err_buf_size) {
+
   for (size_t i = 0; i < ACTIVE_PLAYERS_SIZE; i++) {
     strct_active_player *p = ACTIVE_PLAYERS[i];
     if (!is_player_exists_and_connected(p)) {
@@ -138,8 +140,9 @@ static size_t get_active_players_count() {
 static void print_err(const char *msg) { fprintf(stderr, "FATAL: %s\n", msg); }
 
 // отправляет игровое состояние всем, кроме мастера.
+// [OBSOLETE] , TODO: REMOVE
 static void
-handle_game_state_updated_by_master(ifb_strct_game_state game_state) {
+old_handle_game_state_updated_by_master(ifb_strct_game_state game_state) {
 
   char err_buf[ERR_BUFF_SIZE];
   msgpack_sbuffer sbuf = {0};
@@ -150,7 +153,7 @@ handle_game_state_updated_by_master(ifb_strct_game_state game_state) {
     return;
   }
   // TODO: enet_host_broadcast
-  
+
   // enet_host_broadcast(SERVER_HOST, IFB_NET_CHANNEL_STREAM,)
 
   // return;
@@ -171,6 +174,29 @@ handle_game_state_updated_by_master(ifb_strct_game_state game_state) {
             SERVER_HOST, true, true, err_buf, ERR_BUFF_SIZE)) {
       fprintf(stderr, "ifb_ptcl_try_send_msg_packet() failed: %s\n", err_buf);
     }
+  }
+}
+
+// отправляет игровое состояние всем.
+static void
+handle_game_state_updated_by_master(ifb_strct_game_state game_state) {
+
+  char err_buf[ERR_BUFF_SIZE];
+  msgpack_sbuffer sbuf = {0};
+  msgpack_sbuffer_init(&sbuf);
+
+  if (!ifb_try_pack_game_state(&sbuf, &game_state, err_buf, ERR_BUFF_SIZE)) {
+    fprintf(stderr, "ifb_try_pack_game_state() failed: %s\n", err_buf);
+    return;
+  }
+  bool is_reliable = false;
+  bool is_forced = false;
+
+  if (!ifb_ptcl_try_broadcast_msg_packet(
+          IFB_MSG_TYPE_GAME_STATE_UPD, IFB_NET_CHANNEL_STREAM, &sbuf,
+          SERVER_HOST, is_reliable, is_forced, err_buf, ERR_BUFF_SIZE)) {
+    fprintf(stderr, "ifb_ptcl_try_broadcast_msg_packet() failed: %s\n",
+            err_buf);
   }
 }
 
@@ -271,7 +297,7 @@ int main(void) {
 
   while (1) {
     ENetEvent event;
-    while (enet_host_service(server, &event, 1000) > 0) {
+    while (enet_host_service(server, &event, 16) > 0) {
       switch (event.type) {
       case ENET_EVENT_TYPE_CONNECT: {
         // 0xFF = 255
@@ -320,7 +346,16 @@ int main(void) {
             break;
           }
           case IFB_MSG_TYPE_PLAYER_INPUT: {
-            // переправляем мастеру
+
+            // TODO: Сервер просто не справляется, когда приходит инпут его
+            // процесс затупляется здесь.
+            //  То ли из-за пакетов, то-ли из-за try_get_master_client() - НЕТ, проверено 02.09.26 кэшированием указателя на мастера.
+            //  Или забивается канал IFB_NET_CHANNEL_STREAM - НЕТ, заменил канал передачи на новый - IFB_NET_CHANNEL_STREAM_PUPPET_INPUTS
+            //  XXX Test
+            // break;
+            //  переправляем мастеру
+
+            // TODO: Есть архитектурная проблема. Сервер забивает свой поток обработкой пакетов от инпутов паппетов и поэтому обновления от мастера перебиваются - пиры отключаются и дохнут. Нельзя слать в такой сервер одновременно столько пакетов, он не справляется.
             char err_buf[ERR_BUFF_SIZE];
             strct_active_player *master = NULL;
             if (!try_get_master_client(&master, err_buf, ERR_BUFF_SIZE)) {
@@ -328,9 +363,9 @@ int main(void) {
               break;
               ;
             }
-            if (!ifb_try_relay_packet(event.packet, master->peer,
-                                      IFB_NET_CHANNEL_STREAM, true, err_buf,
-                                      ERR_BUFF_SIZE)) {
+            if (!ifb_try_relay_packet(SERVER_HOST, event.packet, master->peer,
+                                      IFB_NET_CHANNEL_STREAM_PUPPET_INPUTS, false, false,
+                                      err_buf, ERR_BUFF_SIZE)) {
               fprintf(stderr, "ifb_try_relay_packet fail: %s\n", err_buf);
               break;
             }

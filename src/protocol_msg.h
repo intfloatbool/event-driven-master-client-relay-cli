@@ -4,12 +4,13 @@
 
 static const uint16_t PTCL_PORT = 7777;
 static const size_t ERR_BUFF_SIZE = 128;
-static const uint8_t IFB_CNST_NET_CHANNELS_COUNT = 3;
+static const uint8_t IFB_CNST_NET_CHANNELS_COUNT = 4;
 
 typedef enum {
   IFB_NET_CHANNEL_CRITICAL = 0,
   IFB_NET_CHANNEL_STREAM = 1,
-  IFB_NET_CHANNEL_SERVICE = 2
+  IFB_NET_CHANNEL_STREAM_PUPPET_INPUTS = 2,
+  IFB_NET_CHANNEL_SERVICE = 3
 } ifb_en_channel_id;
 
 typedef enum {
@@ -46,6 +47,13 @@ typedef struct ifb_strct_game_state {
   ifb_strct_player_pos pos_4;
 } ifb_strct_game_state;
 
+bool ifb_ptcl_try_broadcast_msg_packet(ifb_en_message_type msg_type,
+                                  ifb_en_channel_id channel_id,
+                                  msgpack_sbuffer *sbuf,
+                                  ENetHost *host, bool is_reliable,
+                                  bool is_forced, char *error_buffer,
+                                  size_t error_buf_size);
+
 bool ifb_ptcl_try_send_msg_packet(ifb_en_message_type msg_type,
                                   ifb_en_channel_id channel_id,
                                   msgpack_sbuffer *sbuf, ENetPeer *peer,
@@ -53,8 +61,8 @@ bool ifb_ptcl_try_send_msg_packet(ifb_en_message_type msg_type,
                                   bool is_forced, char *error_buffer,
                                   size_t error_buf_size);
 
-bool ifb_try_relay_packet(ENetPacket *pkt_src, ENetPeer *peer_to,
-                          ifb_en_channel_id channel_id, bool is_reliable,
+bool ifb_try_relay_packet(ENetHost *host, ENetPacket *pkt_src, ENetPeer *peer_to,
+                          ifb_en_channel_id channel_id, bool is_reliable, bool is_forced,
                           char *err_buf, size_t err_buf_size);
 
 const char *ifb_msg_type_to_str(ifb_en_message_type msg_type);

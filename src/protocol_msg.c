@@ -1,13 +1,8 @@
 #include "protocol_msg.h"
 #include "safe_wrappers/ifb_enet_safe.h"
+#include <enet/enet.h>
 
-bool ifb_ptcl_try_send_msg_packet(ifb_en_message_type msg_type,
-                                  ifb_en_channel_id channel_id,
-                                  msgpack_sbuffer *sbuf, ENetPeer *peer,
-                                  ENetHost *host, bool is_reliable,
-                                  bool is_forced, char *error_buffer,
-                                  size_t error_buf_size) {
-
+bool is_suitable_msg_type(ifb_en_message_type msg_type) {
   switch (msg_type) {
   case IFB_MSG_TYPE_REQ_USER_INFO: {
     break;
@@ -25,10 +20,74 @@ bool ifb_ptcl_try_send_msg_packet(ifb_en_message_type msg_type,
     break;
   }
   default: {
+    return false;
+  }
+  }
+
+  return true;
+}
+
+bool ifb_ptcl_try_broadcast_msg_packet(ifb_en_message_type msg_type,
+                                       ifb_en_channel_id channel_id,
+                                       msgpack_sbuffer *sbuf, ENetHost *host,
+                                       bool is_reliable, bool is_forced,
+                                       char *error_buffer,
+                                       size_t error_buf_size) {
+  if (!is_suitable_msg_type(msg_type)) {
     snprintf(error_buffer, error_buf_size,
              "unknown ifb_en_message_type msg_type!");
     return false;
   }
+
+  uint8_t *data = NULL;
+  size_t data_size = 0;
+
+  if (sbuf != NULL) {
+    data_size = sizeof(uint8_t) + sbuf->size;
+    data = (uint8_t *)malloc(data_size);
+    if (data == NULL) {
+      snprintf(error_buffer, error_buf_size, "malloc() failed.");
+      return false;
+    }
+
+    data[0] = msg_type;
+    memcpy(data + 1, sbuf->data, sbuf->size);
+  } else {
+    data_size = sizeof(uint8_t);
+    data = (uint8_t *)malloc(data_size);
+    if (data == NULL) {
+      snprintf(error_buffer, error_buf_size, "malloc() failed.");
+      return false;
+    }
+    data[0] = msg_type;
+  }
+
+  ENetPacket *pkt =
+      enet_packet_create(data, data_size,
+                         is_reliable ? ENET_PACKET_FLAG_RELIABLE
+                                     : ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
+
+  enet_host_broadcast(host, channel_id, pkt);
+
+  if (is_forced) {
+    enet_host_flush(host);
+  }
+
+  free(data);
+  return true;
+}
+
+bool ifb_ptcl_try_send_msg_packet(ifb_en_message_type msg_type,
+                                  ifb_en_channel_id channel_id,
+                                  msgpack_sbuffer *sbuf, ENetPeer *peer,
+                                  ENetHost *host, bool is_reliable,
+                                  bool is_forced, char *error_buffer,
+                                  size_t error_buf_size) {
+
+  if (!is_suitable_msg_type(msg_type)) {
+    snprintf(error_buffer, error_buf_size,
+             "unknown ifb_en_message_type msg_type!");
+    return false;
   }
 
   uint8_t *data = NULL;
@@ -73,9 +132,10 @@ bool ifb_ptcl_try_send_msg_packet(ifb_en_message_type msg_type,
   return true;
 }
 
-bool ifb_try_relay_packet(ENetPacket *pkt_src, ENetPeer *peer_to,
-                          ifb_en_channel_id channel_id, bool is_reliable,
-                          char *err_buf, size_t err_buf_size) {
+bool ifb_try_relay_packet(ENetHost *host, ENetPacket *pkt_src,
+                          ENetPeer *peer_to, ifb_en_channel_id channel_id,
+                          bool is_reliable, bool is_forced, char *err_buf,
+                          size_t err_buf_size) {
   ENetPacket *pkt =
       enet_packet_create(pkt_src->data, pkt_src->dataLength,
                          is_reliable ? ENET_PACKET_FLAG_RELIABLE
@@ -87,6 +147,10 @@ bool ifb_try_relay_packet(ENetPacket *pkt_src, ENetPeer *peer_to,
     snprintf(err_buf, err_buf_size, "enet_peer_send failed.");
     enet_packet_destroy(pkt);
     return false;
+  }
+
+  if (is_forced) {
+    enet_host_flush(host);
   }
 
   return true;
