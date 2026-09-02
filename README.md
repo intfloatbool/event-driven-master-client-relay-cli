@@ -1,48 +1,47 @@
-
 # Event-Driven Master-Client Relay (CLI, C)
 
-[**ENGLISH Version**](./README_ENG.md)
+[**RUS Version**](./README_RU.md)
 
-Небольшой учебный **сетевой CLI-проект на чистом C**, демонстрирующий **event-driven модель** взаимодействия клиентов через сервер-ретранслятор с **Master-Client Authority**.
+A small educational **networked CLI project written in pure C**, demonstrating an **event-driven model** of client interaction through a relay server with **Master-Client Authority**.
 
-Проект создавался как практическое упражнение по:
-- сетевому программированию на C,
-- работе с ENet (UDP + надежная доставка),
-- сериализации и десериализации сообщений через MsgPack,
-- потокам и синхронизации,
-- проектированию архитектуры клиент ↔ сервер без real-time цикла.
+The project was created as a practical exercise in:
+- network programming in C,
+- working with ENet (UDP + reliable delivery),
+- message serialization and deserialization using MsgPack,
+- multithreading and synchronization,
+- designing client ↔ server architecture without a real-time loop.
 
 ---
 
-## 🎯 Идея проекта
+## 🎯 Project Idea
 
 ![](./screens/server_master_slave_slave_cli.png)
 
-- Есть **сервер-ретранслятор** (relay), который **не содержит игровой логики**
-- Первый подключившийся клиент становится **Master**
-- Master:
-  - хранит состояние мира
-  - обрабатывает input от других клиентов
-  - рассылает обновлённое состояние всем
-- Остальные клиенты (**Slaves**):
-  - отправляют только свои input-команды
-  - применяют состояние, полученное от Master
+- There is a **relay server** that **contains no game logic**
+- The first connected client becomes the **Master**
+- The Master:
+  - stores the world state
+  - processes input from other clients
+  - broadcasts the updated state to all clients
+- Other clients (**Slaves**):
+  - send only their input commands
+  - apply the state received from the Master
 
-Модель **не real-time**, а **событийная**:
-- обновление мира происходит по команде `tick`
-- идеально подходит для обучения, отладки и понимания сетевых паттернов
-
----
-
-**Ключевые принципы:**
-- сервер не интерпретирует данные
-- сервер лишь ретранслирует сообщения
-- вся логика сосредоточена в Master-клиенте
-- единый протокол сообщений для клиента и сервера
+The model is **not real-time**, but **event-driven**:
+- the world is updated via the `tick` command
+- ideal for learning, debugging, and understanding networking patterns
 
 ---
 
-## 📂 Структура проекта
+**Key principles:**
+- the server does not interpret data
+- the server only relays messages
+- all logic is concentrated in the Master client
+- a single shared message protocol for both client and server
+
+---
+
+## 📂 Project Structure
 
 ```
 
@@ -50,104 +49,104 @@
 ├── Makefile
 ├── README.md
 └── src
-    ├── client.c              # CLI клиент (Master / Slave)
-    ├── server.c              # Relay-сервер
-    ├── protocol_msg.h        # Общий сетевой протокол
-    ├── help_func/            # Вспомогательные функции
-    └── thread_safe/          # Потокобезопасные структуры
+    ├── client.c              # CLI client (Master / Slave)
+    ├── server.c              # Relay server
+    ├── protocol_msg.h        # Shared network protocol
+    ├── help_func/            # Helper functions
+    └── thread_safe/          # Thread-safe structures
 
 ````
 
 ---
 
-## 🔌 Используемые технологии
+## 🔌 Technologies Used
 
 - **C (C17)**
-- **[ENet](https://github.com/lsalzman/enet)** — UDP-библиотека с надежной доставкой
-- **[MsgPack-C](https://github.com/msgpack/msgpack-c)** — бинарная сериализация сообщений
-- **POSIX Threads (pthreads)** — многопоточность
+- **[ENet](https://github.com/lsalzman/enet)** — UDP networking library with reliable delivery
+- **[MsgPack-C](https://github.com/msgpack/msgpack-c)** — binary message serialization
+- **POSIX Threads (pthreads)** — multithreading
 - **Linux / WSL2**
 
-Проект ориентирован на Unix-подобные системы.
+The project targets Unix-like systems.
 
 ---
 
-## 📡 Протокол сообщений
+## 📡 Message Protocol
 
-Все сообщения описаны в `protocol_msg.h`.
+All messages are defined in `protocol_msg.h`.
 
-Примеры типов сообщений:
-- регистрация клиента
-- назначение Master
-- input клиента (намерение изменить состояние)
-- snapshot состояния мира
+Examples of message types:
+- client registration
+- Master assignment
+- client input (intention to change state)
+- world state snapshot
 
-Сериализация выполняется через **MsgPack**, что:
-- избавляет от ручного фрейминга
-- делает протокол расширяемым
-- позволяет использовать одинаковые структуры на клиенте и сервере
-
----
-
-## 🧵 Потоки и синхронизация
-
-- Сетевой цикл ENet работает в отдельном потоке
-- CLI-ввод работает независимо
-- Обмен между потоками реализован через потокобезопасные очереди
-- Исключены race-condition при работе с ENet
+Serialization is performed using **MsgPack**, which:
+- removes the need for manual framing
+- makes the protocol extensible
+- allows using identical structures on both client and server
 
 ---
 
-## ▶️ Сборка
+## 🧵 Threads and Synchronization
 
-### Зависимости
+- The ENet networking loop runs in a dedicated thread
+- CLI input is handled independently
+- Inter-thread communication is implemented via thread-safe queues
+- Race conditions when working with ENet are eliminated
 
-Установить:
+---
+
+## ▶️ Build
+
+### Dependencies
+
+Install required libraries:
 ```bash
 sudo apt install libenet-dev libmsgpack-dev libevent-dev -y
 ````
 
-### Сборка
+### Build
 
 ```bash
 make
 ```
 
-Будут собраны:
+This will produce:
 
 * `server`
 * `client`
 
 ---
 
-## 🚀 Запуск
+## 🚀 Run
 
-### Сервер
+### Server
 
 ```bash
 ./server
 ```
 
-### Клиенты
+### Clients
 
 ```bash
-# запускаем на дефолтном хосте (если сервер на той же машине)
+# run on the default host (if the server is on the same machine)
 ./client
 
-# или с аргументом IP хоста где запущен сервер
+# or with the IP argument of the host where the server is running
 ./client 2599.1111.2599.1111
 ```
 
-Можно запускать:
+You can run:
 
-* несколько клиентов на одной машине
-* клиентов на разных ПК в одной LAN / Wi-Fi сети
+* multiple clients on the same machine
+* clients on different machines within the same LAN / Wi-Fi network
 
 ---
 
-## 🕹️ Управление (CLI)
+## 🕹️ Controls (CLI)
 
-Примеры команд в клиенте:
+Example client commands:
 
 ```
 tick
@@ -157,22 +156,21 @@ y+
 y-
 ```
 
-* `tick` — инициирует обновление мира (Master)
-* остальные команды отправляют input Master-клиенту
+* `tick` — triggers a world update (Master only)
+* other commands send input to the Master client
 
 ---
 
-## 📚 Для чего этот проект
+## 📚 Purpose of This Project
 
-Проект создавался **не как игра**, а как:
+This project was created **not as a game**, but as:
 
-* учебный стенд по сетевому программированию
-* основа для перехода к:
+* an educational sandbox for network programming
+* a foundation for transitioning to:
 
-  * real-time синхронизации
+  * real-time synchronization
   * prediction / reconciliation
-  * авторитарному серверу
-* материал для статей и образовательных проектов
+  * an authoritative server model
+* source material for articles and educational content
 
 ---
-
