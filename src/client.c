@@ -1,27 +1,28 @@
 #include <enet/enet.h>
 #include <msgpack.h>
 
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 #include <threads.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "help_func/math_and_time.h"
-#include "ifb_syscall_safe.h"
 #include "protocol_msg.h"
+#include "safe_wrappers/ifb_syscall_safe.h"
 #include "thread_safe/safe_queue.h"
 
 typedef enum {
   CONNECT = 0,
   DISCONNECT_N_FREE = 1,
   REQ_USER_INFO = 2,
-  TICK_SLAVE = 3,
-  TICK_MC = 4,
 } strct_client_command_type;
 
 typedef struct strct_client_command_msg {
@@ -40,6 +41,8 @@ typedef struct strct_user_input {
 } strct_user_input;
 
 // shared
+static const size_t FRAME_RATE = 30;
+
 static const char *NET_SUFFIX = "\t<<<NET_THREAD>>> ";
 
 static const size_t OTHERS_COUNT = 3;
@@ -160,8 +163,12 @@ static void handle_on_slave_connected(ifb_strct_user_info user_info) {
 }
 
 static void
-handle_on_slave_game_state_updated(ifb_strct_game_state game_state) {
-  puts("\n*** *** game_state updated *** ***\n");
+handle_on_game_state_updated_from_server(ifb_strct_game_state game_state) {
+  int my_id = MY_USER_INFO != NULL ? MY_USER_INFO->id : -1;
+  bool is_master = MY_USER_INFO != NULL && MY_USER_INFO->is_master;
+
+  puts("\n*** *** game_state from server updated *** ***\n");
+  printf("\t my_id: %d, is_master: %s\n", my_id, is_master ? "TRUE" : "FALSE");
   printf("\t tick: %d\n", game_state.tick);
   printf("\t pos_1: ( exists: %d, x: %d, y: %d )\n", game_state.pos_1.is_exists,
          game_state.pos_1.x, game_state.pos_1.y);
@@ -196,9 +203,10 @@ static void handle_cmd_slave_tick(strct_user_input *user_input) {
     return;
   }
 
-  if (!ifb_ptcl_try_send_msg_packet(
-          IFB_MSG_TYPE_PLAYER_INPUT, IFB_NET_CHANNEL_STREAM, &sbuf, CLIENT_PEER,
-          CLIENT_HOST, true, true, err_buf, ERR_BUFF_SIZE)) {
+  if (!ifb_ptcl_try_send_msg_packet(IFB_MSG_TYPE_PLAYER_INPUT,
+                                    IFB_NET_CHANNEL_STREAM_PUPPET_INPUTS, &sbuf,
+                                    CLIENT_PEER, CLIENT_HOST, false, false,
+                                    err_buf, ERR_BUFF_SIZE)) {
     fprintf(stderr, "handle_cmd_slave_tick() err:\n\t%s\n", err_buf);
     msgpack_sbuffer_destroy(&sbuf);
     return;
@@ -241,6 +249,18 @@ static void handle_cmd_connect_to_host(strct_msg_connect *msg) {
 
   printf("trying to connect host: %s:%d\n ...", msg->host, msg->port);
 
+  {
+    // test
+    // msg->host = strdup("http://goynet.xxx.ru");
+    char err_buf[ERR_BUFF_SIZE];
+    if (!check_host_error(msg->host, (uint8_t)AF_INET, err_buf,
+                          ERR_BUFF_SIZE)) {
+      fprintf(stderr, "check_host_error() for host '%s' failed! Err: %s\n",
+              msg->host, err_buf);
+      return;
+    }
+  }
+
   ENetAddress address;
   if (enet_address_set_host(&address, msg->host) != 0) {
     print_err("enet_address_set_host() failed.");
@@ -264,8 +284,11 @@ static void handle_cmd_connect_to_host(strct_msg_connect *msg) {
   ENetEvent event;
   int wait_timeout_ms = 3000;
   bool is_connected = false;
-
   while (enet_host_service(client, &event, wait_timeout_ms) > 0) {
+
+    if (is_connected) {
+      break;
+    }
     switch (event.type) {
     case (ENET_EVENT_TYPE_CONNECT): {
       printf("connected to %s:%d\n", msg->host, msg->port);
@@ -290,14 +313,15 @@ static void handle_cmd_connect_to_host(strct_msg_connect *msg) {
 
 static void handle_net_events_loop() {
   ENetEvent event;
-  int r = enet_host_service(CLIENT_HOST, &event, 100);
+  int r = enet_host_service(CLIENT_HOST, &event, 1);
   if (r < 0) {
     print_err("socket error.");
     return;
   }
 
   if (r == 0) {
-    // timeout
+    // no events.
+    // printf("\tno events\n");
     return;
   }
   switch (event.type) {
@@ -309,9 +333,10 @@ static void handle_net_events_loop() {
     if (ifb_ptcl_try_parse_message_by_type(&event, &msg_type, &payload,
                                            &payload_size, err_buf,
                                            ERR_BUFF_SIZE)) {
-      printf("received msg-> type:%s, data_null?:%s\n",
-             ifb_msg_type_to_str(msg_type), payload == NULL ? "true" : "false");
-      // unpack msgpack functions here
+      bool is_master = MY_USER_INFO != NULL && MY_USER_INFO->is_master;
+      // printf("received msg-> type:%s, data_null?:%s is_master:%s\n",
+      //        ifb_msg_type_to_str(msg_type), payload == NULL ? "true" :
+      //        "false", is_master ? "true" : "false");
       switch (msg_type) {
       case IFB_MSG_TYPE_RES_USER_INFO: {
 
@@ -344,10 +369,11 @@ static void handle_net_events_loop() {
         ifb_strct_game_state game_state = {0};
         if (ifb_try_unpack_game_state(payload, payload_size, &game_state,
                                       err_buf, ERR_BUFF_SIZE, false)) {
-          handle_on_slave_game_state_updated(game_state);
+          handle_on_game_state_updated_from_server(game_state);
         } else {
           fprintf(stderr, "ifb_try_unpack_game_state failed: %s\n", err_buf);
         }
+
         break;
       }
       case (IFB_MSG_TYPE_SLAVE_CONNECTED): {
@@ -364,17 +390,20 @@ static void handle_net_events_loop() {
         break;
       }
       case (IFB_MSG_TYPE_PLAYER_INPUT): {
-        // от слейвов мастеру приходят
-        ifb_strct_player_input player_input = {0};
-        if (ifb_try_unpack_player_input(payload, payload_size, &player_input,
-                                        err_buf, ERR_BUFF_SIZE)) {
-          printf("received player input: (id: %d, x: %d, y: %d)\n",
-                 player_input.id, player_input.x, player_input.y);
-          update_games_state_by_slave_input(player_input);
+        if (MY_USER_INFO != NULL && MY_USER_INFO->is_master) {
+          ifb_strct_player_input player_input = {0};
+          if (ifb_try_unpack_player_input(payload, payload_size, &player_input,
+                                          err_buf, ERR_BUFF_SIZE)) {
+            // printf("received player input: (id: %d, x: %d, y: %d)\n",
+            //        player_input.id, player_input.x, player_input.y);
+            update_games_state_by_slave_input(player_input);
 
-        } else {
-          fprintf(stderr, "ifb_try_unpack_player_input failed: %s\n", err_buf);
+          } else {
+            fprintf(stderr, "ifb_try_unpack_player_input failed: %s\n",
+                    err_buf);
+          }
         }
+
         break;
       }
       default: {
@@ -397,7 +426,7 @@ static void handle_net_events_loop() {
 static void *net_bg_thread(void *arg) {
   (void)arg; // supress warning
 
-  struct timespec ts = ifb_mat_timespec_ms(500);
+  struct timespec ts = ifb_mat_timespec_ms(1000 / FRAME_RATE);
 
   while (atomic_load(&IS_APP_RUNNING)) {
 
@@ -421,6 +450,8 @@ static void *net_bg_thread(void *arg) {
         continue;
       }
 
+      printf("\tlocal cmd received: %u\n", cmd_msg->type);
+
       switch (cmd_msg->type) {
       case CONNECT: {
         strct_msg_connect *msg = (strct_msg_connect *)cmd_msg->data;
@@ -431,7 +462,6 @@ static void *net_bg_thread(void *arg) {
         printf("\tCMD CONNECT: argz ( %s, %d )\n", msg->host, msg->port);
 
         handle_cmd_connect_to_host(msg);
-
         free(msg->host);
         free(msg);
 
@@ -447,6 +477,11 @@ static void *net_bg_thread(void *arg) {
       case REQ_USER_INFO: {
         printf("\tCMD REQ_USER_INFO\n");
 
+        if (CLIENT_PEER == NULL) {
+          fprintf(stderr, "CLIENT_PEER is NULL.\n");
+          break;
+        }
+
         char err[ERR_BUFF_SIZE];
 
         if (!ifb_ptcl_try_send_msg_packet(
@@ -455,47 +490,6 @@ static void *net_bg_thread(void *arg) {
           printf("%s send_msg_packet_to_server error: %s\n", NET_SUFFIX, err);
         }
 
-        break;
-      }
-      case TICK_MC: {
-        printf("\tCMD TICK_MC\n");
-
-        char err[ERR_BUFF_SIZE];
-        msgpack_sbuffer sbuf = {0};
-        msgpack_sbuffer_init(&sbuf);
-
-        pthread_mutex_lock(&MTX_CURRENT_GAME_STATE);
-        if (!CURRENT_GAME_STATE) {
-          printf("CURRENT_GAME_STATE is NULL\n!");
-          pthread_mutex_unlock(&MTX_CURRENT_GAME_STATE);
-          break;
-        }
-        ifb_strct_game_state game_state = *CURRENT_GAME_STATE;
-        pthread_mutex_unlock(&MTX_CURRENT_GAME_STATE);
-
-        if (!ifb_try_pack_game_state(&sbuf, &game_state, err, ERR_BUFF_SIZE)) {
-          printf("%s ifb_try_pack_game_state error: %s\n", NET_SUFFIX, err);
-          msgpack_sbuffer_destroy(&sbuf);
-          break;
-        }
-
-        if (!ifb_ptcl_try_send_msg_packet(
-                IFB_MSG_TYPE_GAME_STATE_UPD, IFB_NET_CHANNEL_STREAM, &sbuf,
-                CLIENT_PEER, CLIENT_HOST, true, true, err, ERR_BUFF_SIZE)) {
-          printf("%s send_msg_packet_to_server error: %s\n", NET_SUFFIX, err);
-        }
-        msgpack_sbuffer_destroy(&sbuf);
-        break;
-      }
-      case (TICK_SLAVE): {
-        strct_user_input *data = cmd_msg->data;
-        if (data == NULL) {
-          fprintf(stderr, "cannot resolve strct_user_input* from message.\n");
-          continue;
-        }
-
-        handle_cmd_slave_tick(data);
-        free(data);
         break;
       }
       default: {
@@ -514,8 +508,8 @@ static void *net_bg_thread(void *arg) {
   return NULL;
 }
 
-static bool try_execute_tick_cmd(uint32_t ticks, strct_user_input user_input,
-                                 char *err_buf, size_t err_buf_size) {
+static bool try_execute_tick(uint32_t ticks, strct_user_input user_input,
+                             char *err_buf, size_t err_buf_size) {
 
   pthread_mutex_lock(&MTX_MY_USER_INFO);
   if (MY_USER_INFO == NULL) {
@@ -527,9 +521,9 @@ static bool try_execute_tick_cmd(uint32_t ticks, strct_user_input user_input,
   ifb_strct_user_info my_ui = *MY_USER_INFO;
   pthread_mutex_unlock(&MTX_MY_USER_INFO);
 
-  printf("process input command (ticks: %u, x: %d, y: %d)...\n", ticks,
-         user_input.x, user_input.y);
-
+  //   printf("process input command (ticks: %u, x: %d, y: %d)...\n", ticks,
+  //          user_input.x, user_input.y);
+  bool isMC = my_ui.is_master;
   if (my_ui.is_master) {
     // мастер обрабатывает свой инпут и чужой (приходящий из сервера)
     pthread_mutex_lock(&MTX_CURRENT_GAME_STATE);
@@ -568,13 +562,43 @@ static bool try_execute_tick_cmd(uint32_t ticks, strct_user_input user_input,
     pthread_mutex_lock(&MTX_CURRENT_GAME_STATE);
     *CURRENT_GAME_STATE = game_state;
     pthread_mutex_unlock(&MTX_CURRENT_GAME_STATE);
+  }
 
-    enqueue_cmd(TICK_MC, NULL);
+  if (isMC) {
+    char err[ERR_BUFF_SIZE];
+    msgpack_sbuffer sbuf = {0};
+    msgpack_sbuffer_init(&sbuf);
+
+    pthread_mutex_lock(&MTX_CURRENT_GAME_STATE);
+    if (!CURRENT_GAME_STATE) {
+      snprintf(err_buf, err_buf_size, "CURRENT_GAME_STATE is NULL!");
+      pthread_mutex_unlock(&MTX_CURRENT_GAME_STATE);
+      return false;
+    }
+    ifb_strct_game_state game_state = *CURRENT_GAME_STATE;
+    pthread_mutex_unlock(&MTX_CURRENT_GAME_STATE);
+
+    if (!ifb_try_pack_game_state(&sbuf, &game_state, err, ERR_BUFF_SIZE)) {
+      snprintf(err_buf, err_buf_size, "ifb_try_pack_game_state error: %s\n",
+               err);
+      msgpack_sbuffer_destroy(&sbuf);
+      return false;
+    }
+    // XXX
+    bool is_reliable = false;
+    bool is_forced = false;
+    if (!ifb_ptcl_try_send_msg_packet(IFB_MSG_TYPE_GAME_STATE_UPD,
+                                      IFB_NET_CHANNEL_STREAM, &sbuf,
+                                      CLIENT_PEER, CLIENT_HOST, is_reliable,
+                                      is_forced, err, ERR_BUFF_SIZE)) {
+      snprintf(err_buf, err_buf_size, "send_msg_packet_to_server error: %s\n",
+               err);
+      msgpack_sbuffer_destroy(&sbuf);
+      return false;
+    }
+
   } else {
-    // отправляем свой инпут
-    strct_user_input *out_input = malloc(sizeof(strct_user_input));
-    *out_input = user_input;
-    enqueue_cmd(TICK_SLAVE, out_input);
+    handle_cmd_slave_tick(&user_input);
   }
 
   return true;
@@ -587,7 +611,7 @@ static void send_connect_cmd(const char *host, int port) {
     return;
   }
 
-  size_t host_buf_size = ERR_BUFF_SIZE;
+  size_t host_buf_size = 512;
   char *host_buf = malloc(host_buf_size);
 
   if (host_buf == NULL) {
@@ -608,6 +632,48 @@ static void send_connect_cmd(const char *host, int port) {
   msg_connect->host = host_buf;
 
   enqueue_cmd(CONNECT, (void *)msg_connect);
+}
+
+static bool is_user_info_ready() {
+  pthread_mutex_lock(&MTX_MY_USER_INFO);
+  bool result = false;
+  if (MY_USER_INFO != NULL) {
+    result = true;
+  }
+  pthread_mutex_unlock(&MTX_MY_USER_INFO);
+
+  return result;
+}
+
+static void *tick_loop_thread(void *arg) {
+  (void)arg;
+
+  time_t ms = 1000 / FRAME_RATE;
+  printf("MS: %ld\n", ms);
+  struct timespec ts = ifb_mat_timespec_ms(ms);
+
+  uint64_t total_frames = 0;
+  while (atomic_load(&IS_APP_RUNNING)) {
+
+    if (total_frames % FRAME_RATE == 0) {
+      // printf("frame ticks: %ld\n", total_frames);
+    }
+
+    if (is_user_info_ready()) {
+      char err_buf[ERR_BUFF_SIZE];
+      strct_user_input input = {0};
+      uint32_t ticks = (uint32_t)total_frames;
+      if (!try_execute_tick(ticks, input, err_buf, ERR_BUFF_SIZE)) {
+        fprintf(stderr, "ERR -> tick_loop_thread() try_execute_tick %s\n",
+                err_buf);
+      }
+    }
+
+    thrd_sleep(&ts, NULL);
+    total_frames++;
+  }
+
+  return NULL;
 }
 
 int main(int argc, char **argv) {
@@ -650,6 +716,9 @@ int main(int argc, char **argv) {
 
   pthread_t net_thread;
   pthread_create(&net_thread, NULL, net_bg_thread, NULL);
+
+  pthread_t tick_thread;
+  pthread_create(&tick_thread, NULL, tick_loop_thread, NULL);
 
   // input loop
 
@@ -734,7 +803,7 @@ int main(int argc, char **argv) {
 
       if (is_tick_input) {
         char err_buf[ERR_BUFF_SIZE];
-        if (try_execute_tick_cmd(local_ticks, input, err_buf, ERR_BUFF_SIZE)) {
+        if (try_execute_tick(local_ticks, input, err_buf, ERR_BUFF_SIZE)) {
 
           local_ticks++;
         } else {
@@ -757,6 +826,7 @@ int main(int argc, char **argv) {
   thrd_sleep(&ts, NULL);
 
   atomic_store(&IS_APP_RUNNING, false);
+  pthread_join(tick_thread, NULL);
   pthread_join(net_thread, NULL);
   pthread_mutex_destroy(&local_cmds_mutex);
   pthread_mutex_destroy(&MTX_CURRENT_GAME_STATE);
